@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Map from './components/Map';
 import SearchBar from './components/SearchBar';
 import VerdictSheet from './components/VerdictSheet';
@@ -10,41 +10,65 @@ const FAA_GEOJSON_URL = 'https://uas-faa.opendata.arcgis.com/datasets/dd0d1b726e
 
 export default function App() {
   const [userLocation, setUserLocation] = useState(null);
-  const [verdict, setVerdict] = useState(null);
-  const [isChecking, setIsChecking] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
   const [airspaceFeatures, setAirspaceFeatures] = useState(airspaceData.features);
   const [dataStatus, setDataStatus] = useState('loading');
 
+  // ── FAA GeoJSON prefetch inside requestIdleCallback ────────────────
+  // Deferred so it doesn't compete with the initial map render.
   useEffect(() => {
     let cancelled = false;
-    fetch(FAA_GEOJSON_URL)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((data) => {
-        if (cancelled) return;
-        if (data?.features?.length) {
-          setAirspaceFeatures(data.features);
-          setDataStatus('ready');
-        } else {
-          setDataStatus('fallback');
-        }
-      })
-      .catch((err) => {
-        console.error('[ClearAir] FAA airspace fetch failed:', err.message);
-        if (!cancelled) setDataStatus('fallback');
-      });
-    return () => { cancelled = true; };
+
+    const doFetch = () => {
+      fetch(FAA_GEOJSON_URL)
+        .then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        })
+        .then((data) => {
+          if (cancelled) return;
+          if (data?.features?.length) {
+            setAirspaceFeatures(data.features);
+            setDataStatus('ready');
+          } else {
+            setDataStatus('fallback');
+          }
+        })
+        .catch((err) => {
+          console.error('[ClearAir] FAA airspace fetch failed:', err.message);
+          if (!cancelled) setDataStatus('fallback');
+        });
+    };
+
+    if ('requestIdleCallback' in window) {
+      const id = requestIdleCallback(doFetch);
+      return () => {
+        cancelled = true;
+        cancelIdleCallback(id);
+      };
+    } else {
+      // Fallback: small setTimeout so map paint goes first
+      const t = setTimeout(doFetch, 200);
+      return () => {
+        cancelled = true;
+        clearTimeout(t);
+      };
+    }
   }, []);
 
-  useEffect(() => {
-    if (!userLocation) return;
-    setIsChecking(true);
-    const result = checkAirspace(userLocation.lat, userLocation.lng, airspaceFeatures);
-    setVerdict(result);
-    setIsChecking(false);
+  // ── Airspace intersection — memoised, only recomputes when inputs change ──
+  const computedVerdict = useMemo(() => {
+    if (!userLocation) return null;
+    return checkAirspace(userLocation.lat, userLocation.lng, airspaceFeatures);
   }, [userLocation, airspaceFeatures]);
+
+  // Reset dismissed state whenever a fresh verdict is computed
+  useEffect(() => {
+    setDismissed(false);
+  }, [computedVerdict]);
+
+  // Derive final verdict (null when user explicitly dismissed the sheet)
+  const verdict = dismissed ? null : computedVerdict;
 
   function handleSearchResult({ lat, lng, label }) {
     setUserLocation({ lat, lng, label });
@@ -79,23 +103,7 @@ export default function App() {
 
       <SearchBar onResult={handleSearchResult} />
 
-      {isChecking && (
-        <div style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%,-50%)',
-          color: '#f5f5f5',
-          fontFamily: 'monospace',
-          fontSize: '12px',
-          letterSpacing: '0.1em',
-          zIndex: 30,
-        }}>
-          CHECKING...
-        </div>
-      )}
-
-      <VerdictSheet verdict={verdict} onClose={() => setVerdict(null)} />
+      <VerdictSheet verdict={verdict} onClose={() => setDismissed(true)} />
     </div>
   );
 }

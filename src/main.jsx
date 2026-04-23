@@ -8,3 +8,12 @@ createRoot(document.getElementById('root')).render(
     <App />
   </StrictMode>,
 )
+
+// Register service worker (caches app shell: HTML, JS, CSS — not map tiles)
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/sw.js')
+      .catch((err) => console.error('[ClearAir] SW registration failed:', err));
+  });
+}

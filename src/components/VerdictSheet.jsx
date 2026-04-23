@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react';
+
 const THEMES = {
   'CLEAR': {
     bg: '#14532d',
@@ -19,24 +21,57 @@ const THEMES = {
   },
 };
 
+// Map verdict status → glow CSS class (defined in index.css)
+function glowClass(status) {
+  if (status === 'CLEAR') return 'verdict-glow-clear';
+  if (status === 'AUTHORIZATION REQUIRED') return 'verdict-glow-amber';
+  if (status === 'DO NOT FLY') return 'verdict-glow-red';
+  return '';
+}
+
 export default function VerdictSheet({ verdict, onClose }) {
   const open = !!verdict;
-  const theme = verdict ? THEMES[verdict.status] ?? THEMES['CLEAR'] : THEMES['CLEAR'];
+  const sheetRef = useRef(null);
+  const theme = verdict ? (THEMES[verdict.status] ?? THEMES['CLEAR']) : THEMES['CLEAR'];
+
+  // ── Sheet-up animation: imperatively restart on each open/verdict change ──
+  // Using a ref rather than a CSS transition so the keyframe replays correctly
+  // every time a new verdict arrives, even if the sheet was already visible.
+  useEffect(() => {
+    const el = sheetRef.current;
+    if (!el) return;
+
+    if (open) {
+      // Force reflow so the browser resets the animation
+      el.style.animation = 'none';
+      // eslint-disable-next-line no-unused-expressions
+      el.offsetHeight;
+      el.style.transform = '';
+      el.style.animation = 'sheet-up 250ms cubic-bezier(0.32, 0.72, 0, 1) forwards';
+    } else {
+      el.style.animation = 'none';
+      el.style.transform = 'translateY(100%)';
+    }
+  }, [open, verdict]);
 
   return (
     <div
+      ref={sheetRef}
       style={{
         position: 'absolute',
         bottom: 0,
         left: 0,
         right: 0,
         zIndex: 20,
-        transform: open ? 'translateY(0)' : 'translateY(100%)',
-        transition: 'transform 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
+        // Initial off-screen state; JS in the effect above takes over
+        transform: 'translateY(100%)',
         padding: '0 0 env(safe-area-inset-bottom)',
       }}
     >
+      {/* key forces card remount on each new verdict → glow animation replays */}
       <div
+        key={`${verdict?.status}|${verdict?.zone}`}
+        className={open ? glowClass(verdict?.status) : ''}
         style={{
           background: theme.bg,
           borderTop: `2px solid ${theme.border}`,

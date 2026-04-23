@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import axios from 'axios';
 
 export default function SearchBar({ onResult }) {
@@ -7,14 +7,15 @@ export default function SearchBar({ onResult }) {
   const [gpsLoading, setGpsLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  async function handleSearch(e) {
-    e.preventDefault();
-    if (!query.trim()) return;
+  // Debounce ref: prevents firing Nominatim within 300ms of a prior call
+  const debounceRef = useRef(null);
+
+  const doSearch = useCallback(async (q) => {
     setLoading(true);
     setError(null);
     try {
       const res = await axios.get('https://nominatim.openstreetmap.org/search', {
-        params: { format: 'json', q: query.trim(), limit: 1 },
+        params: { format: 'json', q, limit: 1 },
         headers: { 'Accept-Language': 'en' },
       });
       if (res.data.length === 0) {
@@ -28,6 +29,14 @@ export default function SearchBar({ onResult }) {
     } finally {
       setLoading(false);
     }
+  }, [onResult]);
+
+  function handleSearch(e) {
+    e.preventDefault();
+    if (!query.trim()) return;
+    // Debounce: cancel any pending call, then fire after 300ms
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => doSearch(query.trim()), 300);
   }
 
   function handleGps() {
